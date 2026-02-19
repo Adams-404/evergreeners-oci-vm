@@ -6,7 +6,6 @@ on:
 permissions:
   contents: write
 
-
 jobs:
   create-vm:
     runs-on: ubuntu-latest
@@ -30,21 +29,25 @@ jobs:
       - name: Install OCI CLI
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip curl python3
+          sudo apt-get install -y curl python3 unzip
           curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | bash -s -- --accept-all-defaults
-          echo "$HOME/lib/oci-cli/bin" >> $GITHUB_PATH
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Verify OCI CLI
+        run: |
+          which oci
+          oci --version
 
       - name: Configure OCI CLI
         run: |
           mkdir -p $HOME/.oci
-          cat <<EOF > $HOME/.oci/config
-          [DEFAULT]
-          user=$OCI_USER_OCID
-          fingerprint=$OCI_FINGERPRINT
-          key_file=$HOME/.oci/oci_api_key.pem
-          tenancy=$OCI_TENANCY_OCID
-          region=$OCI_REGION
-          EOF
+
+          printf "[DEFAULT]\nuser=%s\nfingerprint=%s\nkey_file=%s\ntenancy=%s\nregion=%s\n" \
+            "$OCI_USER_OCID" \
+            "$OCI_FINGERPRINT" \
+            "$HOME/.oci/oci_api_key.pem" \
+            "$OCI_TENANCY_OCID" \
+            "$OCI_REGION" > $HOME/.oci/config
 
           echo "$OCI_PRIVATE_KEY" | base64 --decode > $HOME/.oci/oci_api_key.pem
           chmod 600 $HOME/.oci/oci_api_key.pem
@@ -52,18 +55,24 @@ jobs:
       - name: Create VM with retry loop
         run: |
           echo "Starting VM creation loop..."
-          while true; do
-            OUTPUT=$(oci compute instance launch \
-              --compartment-id $OCI_COMPARTMENT_OCID \
-              --availability-domain $AVAILABILITY_DOMAIN \
-              --shape $SHAPE \
-              --display-name $VM_NAME \
-              --image-id $IMAGE_ID \
-              --assign-public-ip true \
-              --wait-for-state RUNNING 2>&1) || true
 
-            if echo "$OUTPUT" | grep -qi "Out of capacity\|ApiError\|ServiceError"; then
-              echo "Capacity not available. Retrying in 150 seconds..."
+          while true; do
+            echo "Attempting to create VM..."
+
+            OUTPUT=$(oci compute instance launch \
+              --compartment-id "$OCI_COMPARTMENT_OCID" \
+              --availability-domain "$AVAILABILITY_DOMAIN" \
+              --shape "$SHAPE" \
+              --display-name "$VM_NAME" \
+              --image-id "$IMAGE_ID" \
+              --assign-public-ip true \
+              --wait-for-state RUNNING 2>&1)
+
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "Creation failed. Retrying in 150 seconds..."
+              echo "$OUTPUT"
               sleep 150
             else
               echo "VM successfully created."
@@ -71,20 +80,13 @@ jobs:
 
               TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-              cat <<EOF > vm-report.md
-          # OCI VM Creation Report
-
-          VM Name: $VM_NAME  
-          Shape: $SHAPE  
-          Availability Domain: $AVAILABILITY_DOMAIN  
-          Region: $OCI_REGION  
-          Created At: $TIMESTAMP  
-
-          Raw Response:
-          \`\`\`
-          $OUTPUT
-          \`\`\`
-          EOF
+              printf "# OCI VM Creation Report\n\nVM Name: %s\nShape: %s\nAvailability Domain: %s\nRegion: %s\nCreated At: %s\n\nRaw Response:\n\n\`\`\`\n%s\n\`\`\`\n" \
+                "$VM_NAME" \
+                "$SHAPE" \
+                "$AVAILABILITY_DOMAIN" \
+                "$OCI_REGION" \
+                "$TIMESTAMP" \
+                "$OUTPUT" > vm-report.md
 
               git config --global user.name "github-actions"
               git config --global user.email "github-actions@users.noreply.github.com"
