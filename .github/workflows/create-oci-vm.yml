@@ -11,16 +11,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
-      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-      OCI_PRIVATE_KEY: ${{ secrets.OCI_KEY_CONTENT }}
-      OCI_REGION: ${{ secrets.OCI_REGION }}
-      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
       VM_NAME: evergreeners-backend
       AVAILABILITY_DOMAIN: AD-1
       SHAPE: VM.Standard.A1.Flex
-      IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
 
     steps:
       - name: Checkout repository
@@ -39,6 +32,12 @@ jobs:
           oci --version
 
       - name: Configure OCI CLI
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_KEY_CONTENT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
         run: |
           mkdir -p $HOME/.oci
 
@@ -53,6 +52,10 @@ jobs:
           chmod 600 $HOME/.oci/oci_api_key.pem
 
       - name: Create VM with retry loop
+        env:
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
         run: |
           echo "Starting VM creation loop..."
 
