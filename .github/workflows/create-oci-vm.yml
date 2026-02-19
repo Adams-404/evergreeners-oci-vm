@@ -1,0 +1,44 @@
+name: Create OCI VM
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *'  # optional: every hour
+
+jobs:
+  create-vm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Install OCI CLI
+        run: |
+          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | bash -s -- --accept-all-defaults --install-dir $HOME/oci-cli
+
+      - name: Setup OCI config
+        run: |
+          mkdir -p $HOME/.oci
+          echo "${{ secrets.OCI_KEY_CONTENT }}" | base64 --decode > $HOME/.oci/oci_api_key.pem
+          cat <<EOF > $HOME/.oci/config
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          key_file=$HOME/.oci/oci_api_key.pem
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          EOF
+          chmod 600 $HOME/.oci/oci_api_key.pem
+
+      - name: Create VM (loop until success)
+        run: |
+          set -e
+          while true; do
+            oci compute instance launch \
+              --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} \
+              --availability-domain $(oci iam availability-domain list --query "data[0].name" --raw-output) \
+              --display-name "evergreeners-vm" \
+              --shape "VM.Standard.E2.1.Micro" \
+              --image-id $(oci compute image list --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} --query "data[0].id" --raw-output) \
+              && break || echo "Failed, retrying in 30s..." && sleep 30
+          done
