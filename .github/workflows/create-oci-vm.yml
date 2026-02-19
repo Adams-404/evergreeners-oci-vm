@@ -3,6 +3,10 @@ name: Create OCI VM
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+
 jobs:
   create-vm:
     runs-on: ubuntu-latest
