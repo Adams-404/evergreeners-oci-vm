@@ -1,13 +1,13 @@
 name: Create OCI VM
 
 on:
-  workflow_dispatch:   # allows manual triggering
+  workflow_dispatch:
 
 jobs:
   create-vm:
     runs-on: ubuntu-latest
+
     env:
-      PATH: $HOME/lib/oci-cli/bin:$PATH
       OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
       OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
       OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
@@ -17,59 +17,77 @@ jobs:
       VM_NAME: evergreeners-backend
       AVAILABILITY_DOMAIN: AD-1
       SHAPE: VM.Standard.A1.Flex
-      IMAGE: 'Canonical-Ubuntu-22.04-2026.01.29-0'
+      IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install dependencies
+      - name: Install OCI CLI
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip python3-pip
-          pip3 install --user oci
-
-      - name: Install OCI CLI globally
-        run: |
-          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | bash
-          echo "export PATH=$HOME/lib/oci-cli/bin:$PATH" >> $GITHUB_ENV
+          sudo apt-get install -y unzip curl python3
+          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | bash -s -- --accept-all-defaults
+          echo "$HOME/lib/oci-cli/bin" >> $GITHUB_PATH
 
       - name: Configure OCI CLI
         run: |
           mkdir -p $HOME/.oci
-          echo "[DEFAULT]
-user=${OCI_USER_OCID}
-fingerprint=${OCI_FINGERPRINT}
-key_file=$HOME/.oci/oci_api_key.pem
-tenancy=${OCI_TENANCY_OCID}
-region=${OCI_REGION}" > $HOME/.oci/config
-          echo "${OCI_PRIVATE_KEY}" | base64 --decode > $HOME/.oci/oci_api_key.pem
+          cat <<EOF > $HOME/.oci/config
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          key_file=$HOME/.oci/oci_api_key.pem
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          EOF
+
+          echo "$OCI_PRIVATE_KEY" | base64 --decode > $HOME/.oci/oci_api_key.pem
           chmod 600 $HOME/.oci/oci_api_key.pem
 
-      - name: Create VM loop
+      - name: Create VM with retry loop
         run: |
           echo "Starting VM creation loop..."
           while true; do
-            CREATE_OUTPUT=$(oci compute instance launch \
+            OUTPUT=$(oci compute instance launch \
               --compartment-id $OCI_COMPARTMENT_OCID \
               --availability-domain $AVAILABILITY_DOMAIN \
               --shape $SHAPE \
               --display-name $VM_NAME \
-              --image-id $IMAGE \
+              --image-id $IMAGE_ID \
               --assign-public-ip true \
               --wait-for-state RUNNING 2>&1) || true
 
-            if echo "$CREATE_OUTPUT" | grep -q "RESOURCE_NOT_FOUND\|ApiError\|Out of capacity"; then
-              echo "VM not created yet. Retrying in 2m30s..."
+            if echo "$OUTPUT" | grep -qi "Out of capacity\|ApiError\|ServiceError"; then
+              echo "Capacity not available. Retrying in 150 seconds..."
               sleep 150
             else
-              echo "VM created successfully!"
-              echo "$CREATE_OUTPUT" > vm-info.txt
+              echo "VM successfully created."
+              echo "$OUTPUT" > vm-info.json
+
+              TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+              cat <<EOF > vm-report.md
+          # OCI VM Creation Report
+
+          VM Name: $VM_NAME  
+          Shape: $SHAPE  
+          Availability Domain: $AVAILABILITY_DOMAIN  
+          Region: $OCI_REGION  
+          Created At: $TIMESTAMP  
+
+          Raw Response:
+          \`\`\`
+          $OUTPUT
+          \`\`\`
+          EOF
+
               git config --global user.name "github-actions"
               git config --global user.email "github-actions@users.noreply.github.com"
-              git add vm-info.txt
-              git commit -m "VM created at $(date -u)"
+              git add vm-info.json vm-report.md
+              git commit -m "VM created at $TIMESTAMP"
               git push
+
               break
             fi
           done
